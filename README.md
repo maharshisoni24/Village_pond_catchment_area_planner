@@ -14,7 +14,7 @@ A web application that analyzes contour/elevation data (KML/KMZ) to identify opt
 │   │   ├── services/ → KML parser, DEM builder, catchment engine, river detector
 │   │   ├── models/   → Pydantic schemas
 │   │   └── core/     → Config & constants
-│   └── README.md     → Backend-specific setup & API docs
+│   └── requirements.txt
 └── contours_1m.kml   → Sample contour file for testing
 ```
 
@@ -25,17 +25,60 @@ cd backend
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## Test the API
+## API Endpoints (localhost)
+
+| URL | What it does |
+|---|---|
+| http://localhost:8000/analyzeContour | `POST` — upload a KML/KMZ file |
+| http://localhost:8000/docs | Swagger UI — interactive API testing in browser |
+| http://localhost:8000/redoc | ReDoc — formatted API documentation |
+| http://localhost:8000/ | Health check |
+
+### Test (JSON response)
 
 ```bash
 curl -X POST http://localhost:8000/analyzeContour \
   -F "file=@contours_1m.kml"
 ```
 
-Interactive docs at **http://localhost:8000/docs**
+### Download GeoJSON file
+
+```bash
+curl -X POST "http://localhost:8000/analyzeContour?format=geojson" \
+  -F "file=@contours_1m.kml" -o result.geojson
+```
+
+---
+
+## 🌐 Live on IIT Bhilai Network
+
+Currently hosted at **`10.1.75.53:7202`** on the IIT Bhilai campus network.
+
+| URL | What it does |
+|---|---|
+| http://10.1.75.53:7202/analyzeContour | `POST` — upload a KML/KMZ file |
+| http://10.1.75.53:7202/docs | Swagger UI — interactive API testing in browser |
+| http://10.1.75.53:7202/redoc | ReDoc — formatted API documentation |
+| http://10.1.75.53:7202/ | Health check |
+
+### Test (JSON response)
+
+```bash
+curl -X POST http://10.1.75.53:7202/analyzeContour \
+  -F "file=@contours_1m.kml"
+```
+
+### Download GeoJSON file
+
+```bash
+curl -X POST "http://10.1.75.53:7202/analyzeContour?format=geojson" \
+  -F "file=@contours_1m.kml" -o result.geojson
+```
+
+---
 
 ## Run Tests
 
