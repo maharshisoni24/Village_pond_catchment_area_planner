@@ -27,9 +27,7 @@ if not hasattr(np, "in1d"):
     np.in1d = np.isin
 
 from pysheds.grid import Grid
-from shapely.geometry import shape, mapping, MultiPolygon, Polygon
-
-from app.services.kml_parser import ParseResult
+from shapely.geometry import mapping, MultiPolygon, Polygon
 
 
 def run_catchment_analysis(

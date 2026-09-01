@@ -21,7 +21,7 @@ major channels.
 from __future__ import annotations
 
 import numpy as np
-from shapely.geometry import LineString, box
+from shapely.geometry import Point
 
 from app.core.config import RIVER_ACCUMULATION_THRESHOLD_SQM, RIVER_BUFFER_M
 from app.services.kml_parser import RiverGeometry
@@ -137,9 +137,7 @@ def _rasterise_explicit(
             for c in range(min_col, max_col):
                 cx = x0 + (c + 0.5) * cell_size
                 cy = y0 + (r + 0.5) * dy
-                if buffered.contains(
-                    LineString([(cx, cy), (cx, cy)]).centroid
-                ):
+                if buffered.contains(Point(cx, cy)):
                     mask[r, c] = True
 
 

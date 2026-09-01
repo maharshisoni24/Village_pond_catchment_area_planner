@@ -2,15 +2,17 @@
 POST /analyzeContour — the single Phase 2 endpoint.
 
 Accepts a KML/KMZ upload and returns catchment analysis JSON.
-Thin handler: validates input, calls service modules, assembles response.
+Pass ?format=geojson to get a downloadable GeoJSON FeatureCollection instead.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi import APIRouter, File, Query, UploadFile, HTTPException
+from fastapi.responses import Response
 
 from app.core.config import MAX_UPLOAD_BYTES, ALLOWED_EXTENSIONS
 from app.models.schemas import (
@@ -39,12 +41,14 @@ router = APIRouter()
         500: {"model": ErrorResponse},
     },
 )
-async def analyze_contour(file: UploadFile = File(...)):
+async def analyze_contour(
+    file: UploadFile = File(...),
+    format: str = Query("json", enum=["json", "geojson"]),
+):
     """
     Upload a KML/KMZ contour file → get catchment analysis + pond location.
 
-    The pipeline:  parse → interpolate → flow analysis → river exclusion → respond.
-    Each step is in its own service module under services/.
+    Use ?format=geojson to download a GeoJSON FeatureCollection file.
     """
     # --- Input validation ---
     ext = Path(file.filename or "").suffix.lower()
@@ -95,6 +99,42 @@ async def analyze_contour(file: UploadFile = File(...)):
         # 7. Terrain stats from parsed contours
         elevations = [c.elevation_m for c in parsed.contours]
 
+        # --- GeoJSON file download ---
+        if format == "geojson":
+            fc = {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [result["pond_lon"], result["pond_lat"]],
+                        },
+                        "properties": {
+                            "name": "Recommended Pond Site",
+                            "type": "pond",
+                            "nearest_river_distance_m": round(dist_m, 1) if dist_m else None,
+                        },
+                    },
+                    {
+                        "type": "Feature",
+                        "geometry": result["catchment_geojson"],
+                        "properties": {
+                            "name": "Catchment Boundary",
+                            "type": "catchment",
+                            "area_sq_km": round(result["area_sq_km"], 4),
+                        },
+                    },
+                ],
+            }
+            stem = Path(file.filename or "result").stem
+            return Response(
+                content=json.dumps(fc, indent=2),
+                media_type="application/geo+json",
+                headers={"Content-Disposition": f'attachment; filename="{stem}_result.geojson"'},
+            )
+
+        # --- Default JSON response ---
         return AnalyzeContourResponse(
             status="success",
             pond_location=PondLocation(
