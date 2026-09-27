@@ -226,6 +226,7 @@ export default function MapView({ result, landResult, mode, loading, onBboxConfi
       // Build popup content: location + catchment + water volume
       const runoffVol  = result.runoff?.annual_runoff_m3;
       const rainfall   = result.rainfall?.annual_avg_mm;
+      const isEstimated = result.rainfall?.source === 'regional_estimate';
       const popupHtml  = `
         <div style="min-width:180px; font-size:13px; line-height:1.6">
           <b style="font-size:14px">${style.label}</b><br/>
@@ -235,8 +236,8 @@ export default function MapView({ result, landResult, mode, loading, onBboxConfi
           ${runoffVol != null
             ? `💧 <b>Annual water volume:</b> ${Math.round(runoffVol).toLocaleString()} m³<br/>`
             : ''}
-          ${rainfall   != null
-            ? `🌧️ <b>Avg rainfall:</b> ${Math.round(rainfall)} mm/yr`
+          ${rainfall != null
+            ? `🌧️ <b>Avg rainfall:</b> ${Math.round(rainfall)} mm/yr${isEstimated ? ' <i style="color:#888">(~est.)</i>' : ''}`
             : ''}
         </div>`;
 

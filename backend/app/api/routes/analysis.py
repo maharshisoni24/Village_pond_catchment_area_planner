@@ -167,7 +167,7 @@ async def run_analysis(body: AnalysisRunRequest):
                     boundary_geojson=c["catchment_geojson"],
                 ))
             except Exception as exc:
-                logger.warning("Candidate %d failed (skipped): %s", rank, exc)
+                logger.debug("Candidate %d skipped (small catchment in river-heavy area): %s", rank, exc)
 
         # Use rank-1 candidate as the primary result if candidates were generated
         if candidates:

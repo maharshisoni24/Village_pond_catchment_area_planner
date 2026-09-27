@@ -37,6 +37,7 @@ class RainfallStats(BaseModel):
     monsoon_avg_mm: float
     years: int
     yearly: list[dict] | None = None
+    source: str = "open_meteo"  # "open_meteo" | "regional_estimate"
 
 
 class RunoffEstimate(BaseModel):
