@@ -58,7 +58,7 @@ cp .env.example .env
 # Edit .env — add your MAPBOX_ACCESS_TOKEN
 
 # Start server
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 7000 --reload
 ```
 
 ### 3. Frontend
@@ -77,8 +77,8 @@ npm run dev -- --host
 
 Both services are now accessible on your local network:
 - **Frontend:** `http://<your-ip>:5173`
-- **API:** `http://<your-ip>:8000`
-- **Swagger docs:** `http://<your-ip>:8000/docs`
+- **API:** `http://<your-ip>:7000`
+- **Swagger docs:** `http://<your-ip>:7000/docs`
 
 ---
 
@@ -181,7 +181,7 @@ Upload KML/KMZ → POST /analyzeContour
 ### Example: Map Mode
 
 ```bash
-curl -X POST http://localhost:8000/api/analysis/run \
+curl -X POST http://localhost:7000/api/analysis/run \
   -H "Content-Type: application/json" \
   -d '{
     "bbox": [81.28, 21.24, 81.31, 21.27],
@@ -192,14 +192,14 @@ curl -X POST http://localhost:8000/api/analysis/run \
 ### Example: KML Mode
 
 ```bash
-curl -X POST "http://localhost:8000/analyzeContour?include_contours=true&include_rainfall=true" \
+curl -X POST "http://localhost:7000/analyzeContour?include_contours=true&include_rainfall=true" \
   -F "file=@contours_1m.kml"
 ```
 
 ### Example: Open Land Detection
 
 ```bash
-curl -X POST http://localhost:8000/api/land/detect \
+curl -X POST http://localhost:7000/api/land/detect \
   -H "Content-Type: application/json" \
   -d '{"bbox": [81.28, 21.24, 81.31, 21.27]}'
 ```
@@ -234,7 +234,7 @@ All tunable constants live in [`backend/app/core/config.py`](backend/app/core/co
 
 | Variable | Required | Description |
 |---|---|---|
-| `VITE_API_URL` | No (default: `http://localhost:8000`) | Backend URL |
+| `VITE_API_URL` | No (default: `http://localhost:7000`) | Backend URL |
 | `VITE_MAPBOX_TOKEN` | If using Mapbox | Same token as backend |
 
 ---
