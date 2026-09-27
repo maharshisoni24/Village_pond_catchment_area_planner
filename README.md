@@ -76,7 +76,7 @@ npm run dev -- --host
 ```
 
 Both services are now accessible on your local network:
-- **Frontend:** `http://<your-ip>:5173`
+- **Frontend:** `http://<your-ip>:5000`
 - **API:** `http://<your-ip>:7000`
 - **Swagger docs:** `http://<your-ip>:7000/docs`
 
