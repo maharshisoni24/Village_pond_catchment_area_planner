@@ -1,0 +1,419 @@
+/* === Design System — design.md palette === */
+
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600&family=DM+Sans:wght@400;500&display=swap');
+
+:root {
+  --primary: #49A3C1;
+  --primary-light: #6ECBFF;
+  --secondary: #2F4D25;
+  --bg: #1A1D21;
+  --surface: #25292F;
+  --text: #E5E7EB;
+  --text-muted: #94A3B8;
+  --success: #60C18E;
+  --warning: #F59E0B;
+  --error: #EF4444;
+  --catchment-fill: rgba(30, 96, 145, 0.25);
+  --catchment-stroke: #1E6091;
+
+  /* design.md §3: headings = Poppins, body = DM Sans (Inter replaced per §7 don't #10) */
+  --font-heading: 'Poppins', sans-serif;
+  --font-body: 'DM Sans', sans-serif;
+
+  /* design.md §5 / §7 don't #19: max radius 12px on cards, 8px on buttons */
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* === Layout === */
+.app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 340px;
+  min-width: 340px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(255,255,255,0.06);
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.sidebar-header h1 {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.sidebar-header p {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sidebar-content {
+  padding: 16px 24px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.map-container {
+  flex: 1;
+  position: relative;
+}
+
+/* === Mode Toggle === */
+.mode-toggle {
+  display: flex;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 13px;
+  cursor: pointer;
+  /* No transition — design.md §7 don't #28 */
+}
+
+.mode-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* === Map mode hint in sidebar === */
+.map-hint {
+  text-align: center;
+  padding: 24px 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+/* === Floating Proceed bar on map === */
+.proceed-bar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius);
+  padding: 8px 12px 8px 16px;
+  z-index: 1000;
+  /* No backdrop-filter — design.md §7 don't #8 */
+}
+
+.proceed-bar--error {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.proceed-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.proceed-bar--error .proceed-hint {
+  color: var(--error);
+}
+
+.btn-proceed {
+  padding: 6px 14px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  /* No transition — design.md §7 don't #28 */
+}
+
+.btn-proceed:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* === Map status hint (bottom of map) === */
+.map-status-hint {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.08);
+  pointer-events: none;
+  z-index: 1000;
+  white-space: nowrap;
+  /* No backdrop-filter — design.md §7 don't #8 */
+}
+
+/* === Input Panel === */
+.upload-zone {
+  border: 1px dashed rgba(255,255,255,0.15);
+  border-radius: var(--radius-lg);
+  padding: 24px 16px;
+  text-align: center;
+  cursor: pointer;
+  margin-bottom: 16px;
+  /* No transition — design.md §7 don't #28 */
+}
+
+.upload-zone.drag-over {
+  border-color: var(--primary);
+  background: rgba(73, 163, 193, 0.06);
+}
+
+.upload-zone-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.upload-zone .filename {
+  font-size: 12px;
+  color: var(--primary-light);
+  margin-top: 8px;
+  word-break: break-all;
+}
+
+/* === Buttons === */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  border: none;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  width: 100%;
+  /* No transition — design.md §7 don't #28 */
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-light);
+  /* color only, no transform or shadow */
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: rgba(132, 204, 22, 0.12);
+  color: #84CC16;
+  border: 1px solid rgba(132, 204, 22, 0.25);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: rgba(132, 204, 22, 0.20);
+}
+.btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.btn-outline:hover {
+  border-color: var(--primary);
+  color: var(--primary-light);
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* === Checkbox === */
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.checkbox-row input[type="checkbox"] {
+  accent-color: var(--primary);
+}
+
+/* === Result Dashboard === */
+.section-title {
+  font-family: var(--font-heading);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 20px 0 10px;
+}
+
+.stat-card {
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.05);
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  /* No box-shadow — design.md §7 don't #5 */
+}
+
+.stat-card .stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.stat-card .stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.stat-card .stat-unit {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.stat-row {
+  display: flex;
+  gap: 8px;
+}
+
+.stat-row .stat-card {
+  flex: 1;
+}
+
+.stat-row .stat-value {
+  font-size: 16px;
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tag-success {
+  background: rgba(96, 193, 142, 0.15);
+  color: var(--success);
+}
+
+.tag-warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+/* === Loading (spinner only — no skeleton loaders per design.md §7 don't #21) === */
+.loading-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 16px;
+  text-align: center;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid rgba(255,255,255,0.08);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 12px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-text {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* === Error === */
+.error-box {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--error);
+  line-height: 1.4;
+}
+
+/* === Download buttons === */
+.download-group {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* === Map overrides === */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}

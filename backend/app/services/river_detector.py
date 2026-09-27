@@ -150,8 +150,12 @@ def _derived_stream_mask(
     Classify cells as river/stream if their contributing area exceeds the threshold.
 
     Contributing area = accumulation_count × cell_area_m².
-    Cell area in m² is approximated from the cell size in degrees using a local
-    conversion at the grid centre latitude.
+    Cell area in m² is approximated from the cell size in degrees.
+
+    Floor: always require at least MIN_CELLS upstream cells, regardless of cell
+    size. Without this, coarse SRTM grids (cell ≈ 111 m, area ≈ 12 000 m²)
+    hit the 50 000 m² threshold after only 4 upstream cells — classifying most
+    of the grid as "river" and leaving no valid pond sites.
     """
     cell_size = meta["cell_size"]
     centre_lat = (meta["y_min"] + meta["y_max"]) / 2
@@ -160,5 +164,8 @@ def _derived_stream_mask(
     m_per_deg_lon = 111_320.0 * np.cos(np.radians(centre_lat))
     cell_area_m2 = (cell_size * m_per_deg_lat) * (cell_size * m_per_deg_lon)
 
-    contributing_area_m2 = acc * cell_area_m2
-    return contributing_area_m2 > threshold_sqm
+    # Threshold in number of upstream cells — floor at 8 to protect coarse grids
+    threshold_cells = max(8, threshold_sqm / cell_area_m2)
+
+    return acc > threshold_cells
+

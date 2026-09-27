@@ -32,6 +32,14 @@ RIVER_ACCUMULATION_THRESHOLD_SQM: float = 50_000.0
 # Prevents picking a pond site right at the bank of a tagged river line.
 RIVER_BUFFER_M: float = 30.0
 
+# Number of DEM grid cells to dilate the river mask before siting the pond.
+# Prevents placing ponds immediately adjacent to a river channel.
+# 3 cells × ~111m (SRTM) ≈ 333m buffer; × ~30m (KML) ≈ 90m buffer.
+RIVER_EXCLUSION_BUFFER_CELLS: int = 3
+
+# Overpass API timeout in seconds for built-up area queries.
+OVERPASS_TIMEOUT_S: int = 25
+
 # Keywords (case-insensitive) that flag a KML placemark or folder as a
 # river/stream layer rather than an elevation contour.
 RIVER_KEYWORDS: list[str] = [
@@ -43,3 +51,25 @@ RIVER_KEYWORDS: list[str] = [
 
 MAX_UPLOAD_BYTES: int = 20 * 1024 * 1024  # 20 MB
 ALLOWED_EXTENSIONS: set[str] = {".kml", ".kmz"}
+
+
+# --- External APIs ---
+
+import os as _os
+
+# Mapbox token — loaded from backend/.env via python-dotenv in main.py.
+MAPBOX_ACCESS_TOKEN: str = _os.environ.get("MAPBOX_ACCESS_TOKEN", "")
+
+# Satellite imagery provider for land_detector.py.
+#
+# "mapbox" — Mapbox Static Images API (satellite-v9 style).
+#             Requires a valid MAPBOX_ACCESS_TOKEN.  5 000 req/month on demo.
+#             Switch TO this when the Mapbox token is working.
+#
+# "esri"   — ESRI World Imagery (ArcGIS Online).
+#             Free, no key, works even when Mapbox limit is hit.
+#             Switch TO this when Mapbox returns 401.
+#
+# ↓↓↓ CHANGE THIS LINE TO SWITCH PROVIDER ↓↓↓
+SATELLITE_PROVIDER: str = "mapbox"
+# ↑↑↑ options: "mapbox" | "esri" ↑↑↑

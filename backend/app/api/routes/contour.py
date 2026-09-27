@@ -1,8 +1,10 @@
 """
-POST /analyzeContour — the single Phase 2 endpoint.
+POST /analyzeContour — the single Phase 2 endpoint, extended for Phase 3.
 
 Accepts a KML/KMZ upload and returns catchment analysis JSON.
 Pass ?format=geojson to get a downloadable GeoJSON FeatureCollection instead.
+Pass ?include_contours=true to include contour line GeoJSON for map rendering.
+Pass ?include_rainfall=true to fetch historical rainfall and compute runoff/pond sizing.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Query, UploadFile, HTTPException
 from fastapi.responses import Response
+from shapely.geometry import mapping
 
 from app.core.config import MAX_UPLOAD_BYTES, ALLOWED_EXTENSIONS
 from app.models.schemas import (
@@ -20,7 +23,10 @@ from app.models.schemas import (
     CatchmentInfo,
     ErrorResponse,
     PondLocation,
+    PondRecommendation,
+    RainfallStats,
     RiverCheck,
+    RunoffEstimate,
     TerrainStats,
 )
 from app.services.kml_parser import parse_kml_bytes
@@ -44,11 +50,15 @@ router = APIRouter()
 async def analyze_contour(
     file: UploadFile = File(...),
     format: str = Query("json", enum=["json", "geojson"]),
+    include_contours: bool = Query(False, description="Include contour GeoJSON for map rendering"),
+    include_rainfall: bool = Query(False, description="Fetch rainfall and compute runoff/pond sizing"),
 ):
     """
     Upload a KML/KMZ contour file → get catchment analysis + pond location.
 
     Use ?format=geojson to download a GeoJSON FeatureCollection file.
+    Use ?include_contours=true to get contour lines for frontend map rendering.
+    Use ?include_rainfall=true to get rainfall stats, runoff estimate, and pond recommendation.
     """
     # --- Input validation ---
     ext = Path(file.filename or "").suffix.lower()
@@ -98,6 +108,35 @@ async def analyze_contour(
 
         # 7. Terrain stats from parsed contours
         elevations = [c.elevation_m for c in parsed.contours]
+
+        # 8. Optional: contour GeoJSON for frontend map rendering
+        contours_geojson = None
+        if include_contours:
+            contours_geojson = _build_contours_geojson(parsed.contours)
+
+        # 9. Optional: rainfall + runoff + pond recommendation
+        rainfall_data = None
+        runoff_data = None
+        pond_rec = None
+        if include_rainfall:
+            try:
+                from app.services.rainfall import fetch_rainfall
+                from app.services.pond_recommender import estimate_runoff, recommend_pond
+
+                rain = await fetch_rainfall(result["pond_lat"], result["pond_lon"])
+                rainfall_data = RainfallStats(**rain)
+
+                runoff = estimate_runoff(
+                    catchment_area_sq_km=round(result["area_sq_km"], 4),
+                    annual_rainfall_mm=rain["annual_avg_mm"],
+                )
+                runoff_data = RunoffEstimate(**runoff)
+
+                pond = recommend_pond(annual_runoff_m3=runoff["annual_runoff_m3"])
+                pond_rec = PondRecommendation(**pond)
+            except Exception as e:
+                logger.warning("Rainfall/runoff fetch failed (non-fatal): %s", e)
+                # Continue without rainfall data — catchment result is still valid
 
         # --- GeoJSON file download ---
         if format == "geojson":
@@ -161,12 +200,18 @@ async def analyze_contour(
                 "pond site chosen as the highest-accumulation point outside the "
                 f"detected river mask (method: {detection_method})."
             ),
+            contours_geojson=contours_geojson,
+            rainfall=rainfall_data,
+            runoff=runoff_data,
+            pond_recommendation=pond_rec,
         )
 
     except ValueError as e:
         # Known pipeline errors (bad file, no valid site, etc.)
-        code = "NO_VALID_SITE" if "NO_VALID_SITE" in str(e) else "PARSE_ERROR"
         raise HTTPException(status_code=422, detail=str(e))
+
+    except HTTPException:
+        raise  # re-raise FastAPI exceptions as-is
 
     except Exception as e:
         logger.exception("Unexpected error in /analyzeContour")
@@ -174,3 +219,15 @@ async def analyze_contour(
             status_code=500,
             detail="Internal processing error. Check server logs for details.",
         )
+
+
+def _build_contours_geojson(contours) -> dict:
+    """Build a GeoJSON FeatureCollection from parsed contour lines."""
+    features = []
+    for c in contours:
+        features.append({
+            "type": "Feature",
+            "geometry": mapping(c.geometry),
+            "properties": {"elevation_m": c.elevation_m},
+        })
+    return {"type": "FeatureCollection", "features": features}

@@ -27,23 +27,25 @@ if not hasattr(np, "in1d"):
     np.in1d = np.isin
 
 from pysheds.grid import Grid
-from shapely.geometry import mapping, MultiPolygon, Polygon
 
 
 def run_catchment_analysis(
     dem: np.ndarray,
     meta: dict,
     river_mask: np.ndarray | None = None,
+    forced_outlet: tuple[int, int] | None = None,
 ) -> dict:
     """
     Full catchment pipeline on the interpolated DEM.
 
     Parameters
     ----------
-    dem        : 2-D elevation array (NaN outside data extent).
-    meta       : grid metadata from dem_builder (transform, shape, etc.).
-    river_mask : boolean array, True = river cell to exclude from pond siting.
-                 Same shape as dem.  None if no river info available.
+    dem            : 2-D elevation array (NaN outside data extent).
+    meta           : grid metadata from dem_builder (transform, shape, etc.).
+    river_mask     : boolean array, True = cell excluded from pond siting.
+    forced_outlet  : (row, col) — skip outlet selection, use this cell.
+                     Used by analysis.py to run catchment for each top-3 candidate
+                     without re-computing flow direction/accumulation.
 
     Returns
     -------
@@ -53,15 +55,13 @@ def run_catchment_analysis(
         area_sq_km             – catchment area
         flow_accumulation      – raw accumulation grid (for river_detector)
     """
+    dem = np.array(dem, dtype=np.float64)
+
     cell_size = meta["cell_size"]
     transform = meta["transform"]
 
-    # --- Set up pysheds Grid ---
     grid = Grid()
 
-    # pysheds needs a ViewFinder to georeference the raster, and its
-    # methods expect Raster objects (numpy subclass with .nodata attribute),
-    # not plain numpy arrays.
     from pysheds.view import ViewFinder, Raster
 
     nodata_val = -9999.0
@@ -78,34 +78,24 @@ def run_catchment_analysis(
 
     dem_raster = Raster(dem_filled, viewfinder=viewfinder)
 
-    # 1. Fill pits — removes small artefact depressions that trap flow
     pit_filled = grid.fill_pits(dem_raster)
+    flooded    = grid.fill_depressions(pit_filled)
+    inflated   = grid.resolve_flats(flooded)
+    fdir       = grid.flowdir(inflated)
+    acc        = grid.accumulation(fdir)
 
-    # 2. Fill depressions (larger sinks)
-    flooded = grid.fill_depressions(pit_filled)
+    if forced_outlet is not None:
+        outlet_row, outlet_col = forced_outlet
+    else:
+        outlet_row, outlet_col = _pick_outlet(acc, dem, river_mask)
 
-    # 3. Resolve flats — assigns flow direction to perfectly flat areas
-    inflated = grid.resolve_flats(flooded)
-
-    # 4. D8 flow direction
-    fdir = grid.flowdir(inflated)
-
-    # 5. Flow accumulation — each cell's value = number of upstream cells
-    acc = grid.accumulation(fdir)
-
-    # 6. Pick outlet = highest accumulation outside the river mask and data-hole mask
-    outlet_row, outlet_col = _pick_outlet(acc, dem, river_mask)
-
-    # Convert pixel to geographic coordinates
     pond_lon = transform[0] + (outlet_col + 0.5) * transform[1]
     pond_lat = transform[3] + (outlet_row + 0.5) * transform[5]
 
-    # 7. Delineate catchment draining to the outlet
     catch_mask = grid.catchment(
-        x=pond_lon, y=pond_lat, fdir=fdir, xytype="coordinate"
+        x=outlet_col, y=outlet_row, fdir=fdir, xytype="index"
     )
 
-    # 8. Convert boolean catchment raster → polygon
     catchment_geojson, area_sq_km = _catchment_to_geojson(
         catch_mask.astype(np.uint8), transform, cell_size
     )
@@ -119,35 +109,134 @@ def run_catchment_analysis(
     }
 
 
-def _pick_outlet(
+def pick_top_outlets(
     acc: np.ndarray,
     dem: np.ndarray,
     river_mask: np.ndarray | None,
-) -> tuple[int, int]:
+    n: int = 3,
+    min_sep_cells: int = 5,
+) -> list[tuple[int, int]]:
     """
-    Choose the best pond outlet: the cell with the highest flow accumulation
-    that is NOT on a river and NOT a NaN/nodata cell.
+    Return up to `n` outlet (row, col) candidates, spread ≥ min_sep_cells apart.
 
-    Why highest-accumulation-outside-river?  The point with the most upstream
-    contributing area collects the most runoff — ideal for a pond — but if
-    that point is on the main river channel it's unsuitable, so we skip it
-    and take the next best candidate (usually a tributary mouth or gully).
+    Scans valid cells by descending accumulation, greedily adds a candidate
+    only if it is ≥ min_sep_cells away (Chebyshev distance) from all already
+    accepted candidates.
+
+    Called by analysis.py after building the exclusion mask — it runs
+    catchment delineation for each candidate (with forced_outlet) so the
+    user can preview all three options.
     """
     valid = np.isfinite(dem) & (acc > 0)
     if river_mask is not None:
         valid = valid & ~river_mask
 
+    border = max(3, min(acc.shape) // 10)
+    interior = np.zeros(acc.shape, dtype=bool)
+    interior[border:-border, border:-border] = True
+    valid = valid & interior
+
+    # Fallback: ignore exclusion mask if nothing left
     if not np.any(valid):
+        valid = np.isfinite(dem) & (acc > 0) & interior
+    if not np.any(valid):
+        valid = np.isfinite(dem) & (acc > 0)
+
+    masked_acc = np.where(valid, acc, -1).ravel()
+    sorted_flat = np.argsort(masked_acc)[::-1]
+
+    selected: list[tuple[int, int]] = []
+    for flat_idx in sorted_flat:
+        if masked_acc[flat_idx] <= 0:
+            break
+        r, c = np.unravel_index(int(flat_idx), acc.shape)
+        # Chebyshev distance check — reject if too close to an existing pick
+        too_close = any(
+            max(abs(r - sr), abs(c - sc)) < min_sep_cells
+            for sr, sc in selected
+        )
+        if not too_close:
+            selected.append((r, c))
+        if len(selected) >= n:
+            break
+
+    return selected
+
+
+def _pick_outlet(
+    acc: np.ndarray,
+    dem: np.ndarray,
+    river_mask: np.ndarray | None,
+    n_candidates: int = 20,
+) -> tuple[int, int]:
+    """
+    Choose the best pond outlet: scan the top-N highest-accumulation cells
+    outside the river mask, then pick the one that gives the largest upstream
+    contributing area (catchment cell count).
+
+    Why scan top-N instead of just argmax?
+    Taking the single highest-accumulation non-river cell often lands on a
+    tiny side gully immediately adjacent to the main channel — its raw
+    accumulation is high but its *actual* catchment (once the river mask is
+    applied) is very small. Scanning N candidates and picking the one whose
+    upstream cell count is largest finds the true best tributary mouth.
+
+    ponytail: N=20 covers the realistic candidate set for village-scale DEMs;
+    raise if needed for very large or complex catchments.
+    """
+    valid = np.isfinite(dem) & (acc > 0)
+    if river_mask is not None:
+        valid = valid & ~river_mask
+
+    # Exclude cells within BORDER pixels of the grid edge.
+    border = max(3, min(acc.shape) // 10)
+    interior = np.zeros(acc.shape, dtype=bool)
+    interior[border:-border, border:-border] = True
+    valid = valid & interior
+
+    if not np.any(valid):
+        # Fallback 1: ignore river/road mask — maybe exclusion > 95% of grid.
+        # Still respect the border guard so pysheds can trace upstream.
+        if river_mask is not None:
+            valid_fb = np.isfinite(dem) & (acc > 0) & interior
+            if np.any(valid_fb):
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "_pick_outlet: exclusion mask left no valid sites — "
+                    "ignoring river/road mask, keeping border guard."
+                )
+                valid = valid_fb
+            else:
+                # Fallback 2: relax border guard as well (last resort)
+                valid_fb2 = np.isfinite(dem) & (acc > 0)
+                if not np.any(valid_fb2):
+                    raise ValueError(
+                        "NO_VALID_SITE: DEM has no valid cells with positive "
+                        "flow accumulation."
+                    )
+                valid = valid_fb2
+        else:
+            raise ValueError(
+                "NO_VALID_SITE: No suitable pond site found. "
+                "Every high-accumulation cell is on the grid boundary "
+                "or outside the data extent."
+            )
+
+    # Get top-N candidate indices by accumulation value among valid cells
+    masked_acc = np.where(valid, acc, -1)
+    flat_valid = masked_acc.ravel()
+    top_flat = np.argsort(flat_valid)[::-1][:n_candidates]
+    candidates = [np.unravel_index(int(i), acc.shape) for i in top_flat
+                  if flat_valid[i] > 0]
+
+    if not candidates:
         raise ValueError(
-            "NO_VALID_SITE: No suitable non-river pond site found. "
-            "Every high-accumulation cell is either on a detected river "
-            "channel or outside the data extent."
+            "NO_VALID_SITE: No valid non-river candidates found after masking."
         )
 
-    # Mask out invalid cells, then find argmax
-    masked_acc = np.where(valid, acc, -1)
-    flat_idx = int(np.argmax(masked_acc))
-    return np.unravel_index(flat_idx, acc.shape)
+    best = max(candidates, key=lambda rc: float(acc[rc[0], rc[1]]))
+    return best
+
 
 
 def _catchment_to_geojson(
@@ -158,47 +247,84 @@ def _catchment_to_geojson(
     """
     Convert a binary catchment raster to a GeoJSON polygon and compute area.
 
-    Uses a simple contour-tracing approach: find all '1' cells, build a convex
-    hull (or union of cell polygons for concave shapes).
+    Uses cv2.findContours to trace the catchment boundary directly — this is
+    O(boundary pixels), far cheaper than the previous approach of building one
+    Shapely Polygon per catchment cell and calling unary_union(), which caused
+    GEOS heap corruption (malloc: invalid next size) on dense catchments such
+    as those derived from the full-coverage SRTM DEM.
 
-    Area is estimated using a local meter-per-degree approximation at the
-    centroid latitude — good enough for small catchments, avoids pulling in
-    pyproj.
+    Why cv2 here?  opencv-python is already in requirements.txt (used by
+    land_detector.py), so this adds no new dependency.
+
+    Area is estimated using a local metre-per-degree approximation at the
+    centroid latitude — good enough for small catchments, avoids pyproj.
     """
+    import cv2 as _cv2
+    from shapely.geometry import mapping, Polygon
+    from shapely.validation import make_valid
+
     rows, cols = np.where(mask > 0)
     if len(rows) == 0:
         raise ValueError("Catchment delineation produced an empty mask")
 
-    # Build polygons from each catchment cell — then union them
-    cell_polys = []
+    # Minimum 2 cells — below this cv2.findContours cannot trace a boundary.
+    # With road+river exclusion on coarse SRTM grids, small catchments between
+    # exclusion zones are legitimate; don't reject them unnecessarily.
+    if len(rows) < 2:
+        raise ValueError(
+            f"Catchment delineation produced only {len(rows)} cell(s). "
+            "Try selecting a different area on the map."
+        )
+
+    # --- Trace the catchment boundary ---
+    mask_u8 = (mask > 0).astype(np.uint8)
+
+    # Dilate by 1 px so the contour runs along the outer pixel edge, not through
+    # pixel centres — this prevents thin-diagonal catchments from producing < 3
+    # contour points with CHAIN_APPROX_SIMPLE.
+    kernel = _cv2.getStructuringElement(_cv2.MORPH_RECT, (3, 3))
+    mask_dilated = _cv2.dilate(mask_u8, kernel, iterations=1)
+
+    # CHAIN_APPROX_NONE: keep every contour pixel (no compression).
+    # Ensures we get ≥ 4 distinct points even on small rectangular catchments.
+    contours, _ = _cv2.findContours(
+        mask_dilated, _cv2.RETR_EXTERNAL, _cv2.CHAIN_APPROX_NONE
+    )
+    if not contours:
+        raise ValueError("cv2.findContours found no contour in catchment mask")
+
+    # In case of multiple fragments, take the largest
+    main = max(contours, key=_cv2.contourArea)
+    pts = main.squeeze(axis=1) if main.ndim == 3 else main
+
+    # Convert pixel (col, row) → geographic (lon, lat)
     x0, dx, _, y0, _, dy = transform
-    for r, c in zip(rows, cols):
-        x = x0 + c * dx
-        y = y0 + r * dy
-        cell_polys.append(Polygon([
-            (x, y), (x + dx, y), (x + dx, y + dy), (x, y + dy),
-        ]))
+    geo_coords = []
+    for pt in pts:
+        px, py = int(pt[0]), int(pt[1])
+        lon = x0 + (px + 0.5) * dx   # pixel centre
+        lat = y0 + (py + 0.5) * dy   # dy is negative → south
+        geo_coords.append((lon, lat))
 
-    from shapely.ops import unary_union
-    catchment_poly = unary_union(cell_polys)
+    if len(geo_coords) < 3:
+        raise ValueError(
+            f"Catchment boundary has only {len(geo_coords)} points. "
+            "Try selecting a larger area on the map."
+        )
 
-    # Simplify to reduce coordinate count (tolerance in degrees ≈ ~5 m)
-    catchment_poly = catchment_poly.simplify(cell_size * 0.5)
-
-    if isinstance(catchment_poly, MultiPolygon):
-        # Take the largest polygon
-        catchment_poly = max(catchment_poly.geoms, key=lambda p: p.area)
+    geo_coords.append(geo_coords[0])  # close the ring
+    poly = Polygon(geo_coords)
+    if not poly.is_valid or poly.is_empty:
+        poly = make_valid(poly)
 
     # Approximate area in km²
-    centroid = catchment_poly.centroid
+    centroid = poly.centroid
     m_per_deg_lat = 111_320.0
     m_per_deg_lon = 111_320.0 * np.cos(np.radians(centroid.y))
-    area_deg2 = catchment_poly.area
-    area_m2 = area_deg2 * m_per_deg_lat * m_per_deg_lon
-    area_sq_km = area_m2 / 1e6
+    area_sq_km = poly.area * m_per_deg_lat * m_per_deg_lon / 1e6
 
-    geojson = mapping(catchment_poly)
-    return geojson, float(area_sq_km)
+    return mapping(poly), float(area_sq_km)
+
 
 
 def _to_affine(transform_tuple: tuple):
