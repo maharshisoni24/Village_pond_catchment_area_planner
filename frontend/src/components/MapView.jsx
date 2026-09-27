@@ -223,8 +223,25 @@ export default function MapView({ result, landResult, mode, loading, onBboxConfi
         iconAnchor: [isActive ? 11 : 8, isActive ? 11 : 8],
       });
 
+      // Build popup content: location + catchment + water volume
+      const runoffVol  = result.runoff?.annual_runoff_m3;
+      const rainfall   = result.rainfall?.annual_avg_mm;
+      const popupHtml  = `
+        <div style="min-width:180px; font-size:13px; line-height:1.6">
+          <b style="font-size:14px">${style.label}</b><br/>
+          <span style="color:#555">📍 ${cand.lat.toFixed(5)}°N, ${cand.lon.toFixed(5)}°E</span><br/>
+          <hr style="margin:4px 0; border-color:#ddd"/>
+          🗺️ <b>Catchment area:</b> ${cand.area_sq_km} km²<br/>
+          ${runoffVol != null
+            ? `💧 <b>Annual water volume:</b> ${Math.round(runoffVol).toLocaleString()} m³<br/>`
+            : ''}
+          ${rainfall   != null
+            ? `🌧️ <b>Avg rainfall:</b> ${Math.round(rainfall)} mm/yr`
+            : ''}
+        </div>`;
+
       const marker = L.marker([cand.lat, cand.lon], { icon })
-        .bindPopup(`<b>${style.label}</b><br/>${cand.lat.toFixed(5)}°N, ${cand.lon.toFixed(5)}°E<br/>Catchment: ${cand.area_sq_km} km²`)
+        .bindPopup(popupHtml, { maxWidth: 240 })
         .on('click', () => onCandidateSelect?.(cand.rank))
         .addTo(map);
       resultLayersRef.current.push(marker);
@@ -238,14 +255,21 @@ export default function MapView({ result, landResult, mode, loading, onBboxConfi
         }).addTo(map);
         resultLayersRef.current.push(catchLayer);
       }
+      const runoffVolKml = result.runoff?.annual_runoff_m3;
+      const rainfallKml  = result.rainfall?.annual_avg_mm;
       const marker = L.marker(
         [result.pond_location.lat, result.pond_location.lon],
         { icon: POND_ICON }
       )
-        .bindPopup(
-          `<b>Recommended Pond Site</b><br/>
-           ${result.pond_location.lat.toFixed(5)} N, ${result.pond_location.lon.toFixed(5)} E`
-        )
+        .bindPopup(`
+          <div style="min-width:180px; font-size:13px; line-height:1.6">
+            <b style="font-size:14px">🏆 Recommended Pond Site</b><br/>
+            <span style="color:#555">📍 ${result.pond_location.lat.toFixed(5)}°N, ${result.pond_location.lon.toFixed(5)}°E</span><br/>
+            <hr style="margin:4px 0; border-color:#ddd"/>
+            🗺️ <b>Catchment area:</b> ${result.catchment.area_sq_km} km²<br/>
+            ${runoffVolKml != null ? `💧 <b>Annual water volume:</b> ${Math.round(runoffVolKml).toLocaleString()} m³<br/>` : ''}
+            ${rainfallKml  != null ? `🌧️ <b>Avg rainfall:</b> ${Math.round(rainfallKml)} mm/yr` : ''}
+          </div>`, { maxWidth: 240 })
         .addTo(map);
       resultLayersRef.current.push(marker);
     }
