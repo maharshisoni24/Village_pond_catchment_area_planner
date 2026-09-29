@@ -92,25 +92,42 @@ async def fetch_dem_for_bbox(bbox: list[float]) -> tuple[np.ndarray, dict]:
 
     # Fetch in sequential batches (rate-limit friendly)
     elevations: list[float | None] = []
+    _MAX_RETRIES = 5
     # http2=False: campus network proxy blocks HTTP/2 ALPN negotiation
     async with httpx.AsyncClient(timeout=30, http2=False) as client:
         for i in range(0, len(points), _BATCH_SIZE):
-            batch = points[i: i + _BATCH_SIZE]
-            # Retry up to 3 times on transient network errors
-            for attempt in range(3):
+            batch       = points[i: i + _BATCH_SIZE]
+            batch_num   = i // _BATCH_SIZE + 1
+            batch_elevs = None
+
+            # Exponential backoff: 2s, 4s, 8s, 16s between retries.
+            # DNS on restricted SSH networks can take 10-15 s to recover —
+            # fixed 2s retries hit the window where resolver is still down.
+            for attempt in range(_MAX_RETRIES):
+                wait = 2 ** attempt          # 1→2s, 2→4s, 3→8s, 4→16s
                 try:
                     batch_elevs = await _fetch_batch(client, batch)
                     break
-                except (httpx.ConnectError, httpx.TimeoutException) as exc:
-                    if attempt == 2:
-                        raise ValueError(
-                            f"OpenTopoData unreachable after 3 attempts: {exc}"
-                        ) from exc
-                    logger.warning(
-                        "Batch %d fetch failed (attempt %d/3): %s — retrying in 2s",
-                        i // _BATCH_SIZE + 1, attempt + 1, exc,
-                    )
-                    await asyncio.sleep(2)
+                except (httpx.ConnectError, httpx.TimeoutException,
+                        httpx.RemoteProtocolError) as exc:
+                    if attempt == _MAX_RETRIES - 1:
+                        # Final attempt failed — fill with NaN and continue.
+                        # The 95% validity check below will catch it if too
+                        # many batches fail.
+                        logger.warning(
+                            "Batch %d failed all %d attempts (%s) — "
+                            "filling with NaN and continuing",
+                            batch_num, _MAX_RETRIES, exc,
+                        )
+                        batch_elevs = [None] * len(batch)
+                    else:
+                        logger.warning(
+                            "Batch %d fetch failed (attempt %d/%d): %s "
+                            "— retrying in %ds",
+                            batch_num, attempt + 1, _MAX_RETRIES, exc, wait,
+                        )
+                        await asyncio.sleep(wait)
+
             elevations.extend(batch_elevs)
             if i + _BATCH_SIZE < len(points):
                 await asyncio.sleep(_BATCH_DELAY_S)
