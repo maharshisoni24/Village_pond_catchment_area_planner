@@ -1,0 +1,19 @@
+# Prometheus standalone config (localhost addresses, no Docker)
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    project: "village-pond-planner"
+
+scrape_configs:
+  - job_name: "otel-collector-pond-metrics"
+    static_configs:
+      - targets: ["localhost:8889"]
+
+  - job_name: "otel-collector-self"
+    static_configs:
+      - targets: ["localhost:8888"]
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

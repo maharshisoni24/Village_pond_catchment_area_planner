@@ -1,57 +1,40 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# stop_all.sh — gracefully stop all Village Pond services
+# scripts/stop_all.sh — Gracefully stop all services by PID file / pattern
+#
+# Usage:  bash scripts/stop_all.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OBS_DIR="$REPO_DIR/observability"
-LOG_DIR="/tmp"
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+info()  { echo -e "${GREEN}[stop_all]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[stop_all]${NC} $*"; }
 
-echo "=== Village Pond OTel Stack — Stop ==="
-
-# ── Stop backend ──────────────────────────────────────────────────────────────
-if [[ -f "$LOG_DIR/backend.pid" ]]; then
-    PID=$(cat "$LOG_DIR/backend.pid")
-    if kill -0 "$PID" 2>/dev/null; then
-        echo "Stopping backend (PID $PID)..."
-        kill "$PID"
+stop_pid() {
+  local name="$1"; local pid_file="$2"
+  if [ -f "$pid_file" ]; then
+    local PID
+    PID=$(cat "$pid_file" 2>/dev/null || echo "")
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+      kill "$PID" && info "Stopped $name (PID $PID)" || warn "Could not kill $PID"
     else
-        echo "Backend (PID $PID) already stopped"
+      info "$name: PID file exists but process not running"
     fi
-    rm -f "$LOG_DIR/backend.pid"
-fi
+    rm -f "$pid_file"
+  else
+    info "$name: no PID file"
+  fi
+}
 
-# ── Stop frontend ─────────────────────────────────────────────────────────────
-if [[ -f "$LOG_DIR/frontend.pid" ]]; then
-    PID=$(cat "$LOG_DIR/frontend.pid")
-    if kill -0 "$PID" 2>/dev/null; then
-        echo "Stopping frontend (PID $PID)..."
-        kill "$PID"
-    else
-        echo "Frontend (PID $PID) already stopped"
-    fi
-    rm -f "$LOG_DIR/frontend.pid"
-fi
+# Stop in reverse startup order
+stop_pid "Frontend"   /tmp/frontend.pid
+stop_pid "Backend"    /tmp/backend.pid
+stop_pid "Grafana"    /tmp/grafana.pid
+stop_pid "Prometheus" /tmp/prometheus.pid
+stop_pid "otelcol"    /tmp/otelcol.pid
+stop_pid "Loki"       /tmp/loki.pid
+stop_pid "Jaeger"     /tmp/jaeger.pid
 
-# ── Stop observability stack ──────────────────────────────────────────────────
-if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-    cd "$OBS_DIR"
-    docker compose down
-    cd "$REPO_DIR"
-    echo "✅ Observability stack stopped via docker compose"
-else
-    for svc in otelcol jaeger prometheus loki grafana; do
-        pidfile="$LOG_DIR/${svc}.pid"
-        if [[ -f "$pidfile" ]]; then
-            PID=$(cat "$pidfile")
-            if kill -0 "$PID" 2>/dev/null; then
-                echo "Stopping $svc (PID $PID)..."
-                kill "$PID"
-            fi
-            rm -f "$pidfile"
-        fi
-    done
-fi
-
-echo "Done."
+sleep 2
+info "All services stopped."
+info "Check with: ps aux | grep -E 'uvicorn|otelcol|jaeger|loki|prometheus|grafana'"

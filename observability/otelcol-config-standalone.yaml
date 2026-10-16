@@ -1,0 +1,111 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# OTel Collector config — STANDALONE (no Docker) — tested with v0.113.0
+#
+# Architecture (all on localhost, no Docker):
+#   Backend/Frontend → otelcol :4317 (gRPC) / :4318 (HTTP)
+#   otelcol → Jaeger OTLP gRPC :4327  ← Jaeger uses non-default port to avoid
+#              conflict with otelcol's own OTLP receiver on :4317
+#   otelcol → Prometheus scrape endpoint :8889
+#   otelcol → Loki HTTP :3100
+#
+# Start Jaeger with: --collector.otlp.grpc.host-port=:4327 --collector.otlp.http.host-port=:4328
+# ─────────────────────────────────────────────────────────────────────────────
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+        cors:
+          allowed_origins: ["*"]
+          allowed_headers: ["*"]
+
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: "otel-collector"
+          static_configs:
+            - targets: ["localhost:8888"]
+
+processors:
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+    spike_limit_mib: 50
+
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 5s
+
+  # Inject resource attributes as Loki stream labels
+  resource:
+    attributes:
+      - action: insert
+        key: loki.resource.labels
+        value: service.name, service.version, deployment.environment
+
+exporters:
+  # Traces → Jaeger via OTLP gRPC (Jaeger non-default port 4327)
+  # NOTE: 'jaeger' exporter removed in otelcol-contrib ≥0.87; use otlp instead.
+  otlp/jaeger:
+    endpoint: "localhost:4327"
+    tls:
+      insecure: true
+
+  # Metrics → Prometheus scrape endpoint exposed by otelcol
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: "pond"
+    send_timestamps: true
+    metric_expiration: 180m
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Logs → Loki
+  # NOTE: 'labels' key removed in v0.82+; use resource processor + loki.resource.labels instead.
+  loki:
+    endpoint: "http://localhost:3100/loki/api/v1/push"
+    default_labels_enabled:
+      exporter: true
+      level: true
+
+  # Debug exporter — prints raw telemetry to collector stdout (great for viva demo!)
+  debug:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 100
+
+extensions:
+  health_check:
+    endpoint: "0.0.0.0:13133"
+
+service:
+  extensions: [health_check]
+
+  pipelines:
+    traces:
+      receivers:  [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters:  [otlp/jaeger, debug]
+
+    metrics:
+      receivers:  [otlp, prometheus]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters:  [prometheus, debug]
+
+    logs:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, resourcedetection, batch]
+      exporters:  [loki, debug]
+
+  telemetry:
+    logs:
+      level: "info"
+    metrics:
+      address: "0.0.0.0:8888"
