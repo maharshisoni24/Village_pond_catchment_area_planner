@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: "Village Pond Dashboards"
+    orgId: 1
+    folder: "Village Pond"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

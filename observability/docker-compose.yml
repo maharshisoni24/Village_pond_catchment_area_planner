@@ -1,0 +1,105 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Village Pond Planning System — Observability Stack
+#
+# Services:
+#   otel-collector  4317 (gRPC OTLP)  4318 (HTTP OTLP)  8888 (metrics)
+#   jaeger          16686 (UI)        14250 (gRPC)
+#   prometheus      9090 (UI + scrape)
+#   loki            3100 (HTTP push)
+#   grafana         3000 (UI)
+#
+# Start:  docker compose -f observability/docker-compose.yml up -d
+# Stop:   docker compose -f observability/docker-compose.yml down
+# Logs:   docker compose -f observability/docker-compose.yml logs -f
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── OTel Collector (contrib) ────────────────────────────────────────────────
+  # Receives OTLP (gRPC + HTTP), fans out to Jaeger, Prometheus, Loki
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.113.0
+    container_name: pond_otel_collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otelcol-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"    # OTLP gRPC  (backend → collector)
+      - "4318:4318"    # OTLP HTTP  (browser frontend → collector)
+      - "8888:8888"    # Collector self-metrics (scraped by Prometheus)
+      - "8889:8889"    # Prometheus exporter endpoint
+    depends_on:
+      - jaeger
+      - prometheus
+      - loki
+    restart: unless-stopped
+
+  # ── Jaeger (all-in-one) ─────────────────────────────────────────────────────
+  # Stores and visualises distributed traces
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    container_name: pond_jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14250:14250"   # gRPC (collector → jaeger)
+    restart: unless-stopped
+
+  # ── Prometheus ──────────────────────────────────────────────────────────────
+  # Scrapes metrics from the OTel collector's Prometheus exporter
+  prometheus:
+    image: prom/prometheus:v3.0.0
+    container_name: pond_prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"    # Prometheus UI
+    restart: unless-stopped
+
+  # ── Loki ────────────────────────────────────────────────────────────────────
+  # Log aggregation back-end (Grafana datasource)
+  loki:
+    image: grafana/loki:3.2.0
+    container_name: pond_loki
+    command: -config.file=/etc/loki/config.yaml
+    volumes:
+      - ./loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"    # Loki HTTP API (collector → loki push)
+    restart: unless-stopped
+
+  # ── Grafana ─────────────────────────────────────────────────────────────────
+  # Visualises metrics + logs; traces link out to Jaeger
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: pond_grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"    # Grafana UI
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:

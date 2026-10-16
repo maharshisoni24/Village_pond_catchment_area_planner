@@ -1,0 +1,34 @@
+apiVersion: 1
+
+datasources:
+  # ── Prometheus (metrics) ──────────────────────────────────────────────────────
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: "15s"
+
+  # ── Loki (logs) ──────────────────────────────────────────────────────────────
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        # Extract trace_id from log lines and link to Jaeger
+        - matcherRegex: "trace_id=([a-f0-9]+)"
+          name: TraceID
+          url: "http://localhost:16686/trace/${__value.raw}"
+          datasourceUid: jaeger
+
+  # ── Jaeger (traces) ───────────────────────────────────────────────────────────
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      nodeGraph:
+        enabled: true

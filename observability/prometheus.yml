@@ -1,0 +1,29 @@
+# Prometheus configuration for the Village Pond observability stack
+# Scrapes metrics from:
+#   - OTel collector Prometheus exporter (pond.* custom metrics + HTTP server metrics)
+#   - Collector self-metrics
+
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    project: "village-pond-planner"
+
+scrape_configs:
+  # OTel Collector — custom pond.* metrics exported via Prometheus exporter
+  - job_name: "otel-collector-pond-metrics"
+    static_configs:
+      - targets: ["otel-collector:8889"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+
+  # OTel Collector internal / self-monitoring metrics
+  - job_name: "otel-collector-self"
+    static_configs:
+      - targets: ["otel-collector:8888"]
+
+  # Prometheus itself (meta)
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

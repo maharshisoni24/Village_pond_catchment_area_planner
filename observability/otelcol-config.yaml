@@ -1,0 +1,127 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenTelemetry Collector (contrib) configuration
+# Village Pond Planning System
+#
+# Receivers: OTLP gRPC + HTTP (from backend and browser)
+# Processors: batch (efficiency), memory_limiter (safety)
+# Exporters:
+#   jaeger      — traces
+#   prometheus  — metrics (scrape endpoint)
+#   loki        — logs
+#   debug       — prints raw telemetry to collector stdout (evidence for viva)
+# ─────────────────────────────────────────────────────────────────────────────
+
+receivers:
+  # OTLP gRPC — backend FastAPI sends here
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      # OTLP HTTP — browser OTel SDK sends here (CORS enabled below)
+      http:
+        endpoint: "0.0.0.0:4318"
+        cors:
+          # Allow the browser frontend to push spans cross-origin
+          allowed_origins:
+            - "http://localhost:5000"
+            - "http://localhost:5173"
+            - "http://10.1.75.53:5201"
+            - "http://10.1.75.53:5000"
+            - "*"
+          allowed_headers:
+            - "*"
+
+  # Prometheus self-scrape for collector internal metrics
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: "otel-collector"
+          static_configs:
+            - targets: ["localhost:8888"]
+
+processors:
+  # Batch for efficiency — flush every 5 s or when 512 spans accumulate
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+  # Memory limiter — kill spikes before OOM (50 MB soft, 100 MB hard)
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 100
+    spike_limit_mib: 50
+
+  # Resource detector — adds host.name, os.type etc. to all signals
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 5s
+
+exporters:
+  # ── Traces → Jaeger ──────────────────────────────────────────────────────────
+  otlp/jaeger:
+    endpoint: "jaeger:14250"
+    tls:
+      insecure: true
+
+  # ── Metrics → Prometheus scrape endpoint ─────────────────────────────────────
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: "pond"
+    send_timestamps: true
+    metric_expiration: 180m
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # ── Logs → Loki ──────────────────────────────────────────────────────────────
+  loki:
+    endpoint: "http://loki:3100/loki/api/v1/push"
+    default_labels_enabled:
+      exporter: true
+      level: true
+    labels:
+      resource:
+        service.name: "service_name"
+        service.version: "service_version"
+        deployment.environment: "environment"
+
+  # ── Debug / logging exporter ─────────────────────────────────────────────────
+  # Prints a sample of every signal to the collector's stdout.
+  # Leave enabled for the viva — shows raw OTel data in terminal.
+  debug:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 100   # 1-in-100 after first 5
+
+extensions:
+  health_check:
+    endpoint: "0.0.0.0:13133"
+  pprof:
+    endpoint: "0.0.0.0:1777"
+
+service:
+  extensions: [health_check, pprof]
+
+  pipelines:
+    # Traces: backend (gRPC) + browser (HTTP) → Jaeger + debug
+    traces:
+      receivers:  [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters:  [otlp/jaeger, debug]
+
+    # Metrics: OTLP push from backend → Prometheus scrape endpoint + debug
+    metrics:
+      receivers:  [otlp, prometheus]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters:  [prometheus, debug]
+
+    # Logs: OTLP push from backend → Loki + debug
+    logs:
+      receivers:  [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters:  [loki, debug]
+
+  telemetry:
+    logs:
+      level: "info"
+    metrics:
+      address: "0.0.0.0:8888"
