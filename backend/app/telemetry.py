@@ -11,6 +11,8 @@ Configuration via env vars (with safe defaults for local dev):
   OTEL_SERVICE_VERSION           default "0.2.0"
   OTEL_DEPLOYMENT_ENVIRONMENT    default "development"
   OTEL_ENABLED                   set "false" to disable (useful for unit tests)
+  OTEL_CONSOLE_EXPORT            set "true" to print spans/metrics to stdout
+                                 (useful when no collector is running locally)
 
 Call `setup_telemetry()` exactly once at startup (in main.py), then import
 the module-level `tracer` and `meter` wherever you need to add manual spans
@@ -27,7 +29,9 @@ from typing import Optional
 # ──────────────────────────────────────────────────────────────────────────────
 # Guard: allow disabling OTel entirely (e.g. in CI / unit tests)
 # ──────────────────────────────────────────────────────────────────────────────
-_OTEL_ENABLED = os.environ.get("OTEL_ENABLED", "true").lower() not in ("false", "0", "no")
+_OTEL_ENABLED      = os.environ.get("OTEL_ENABLED", "true").lower() not in ("false", "0", "no")
+# When true, spans and metrics also print to stdout (no collector needed)
+_CONSOLE_EXPORT    = os.environ.get("OTEL_CONSOLE_EXPORT", "false").lower() in ("true", "1", "yes")
 
 logger = logging.getLogger(__name__)
 
@@ -175,41 +179,61 @@ def _get_instance_id() -> str:
 
 
 def _configure_traces() -> None:
-    """Configure TracerProvider with OTLP gRPC exporter + batch processor."""
+    """Configure TracerProvider with OTLP gRPC exporter + batch processor.
+
+    When OTEL_CONSOLE_EXPORT=true, also adds a SimpleSpanProcessor with
+    ConsoleSpanExporter so every finished span is printed to stdout immediately.
+    Useful for local demos without a collector running.
+    """
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
-    exporter = OTLPSpanExporter(
+    provider = TracerProvider(resource=_make_resource())
+
+    # Always wire up OTLP (batch) — errors are logged, never fatal
+    otlp_exporter = OTLPSpanExporter(
         endpoint=_OTLP_ENDPOINT,
         insecure=True,   # no TLS for local/lab deployment
     )
-    provider = TracerProvider(resource=_make_resource())
-    provider.add_span_processor(BatchSpanProcessor(exporter))
+    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+
+    # Console exporter: print spans to stdout (no collector needed)
+    if _CONSOLE_EXPORT:
+        from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+        provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+        logger.info("OTel: ConsoleSpanExporter active — spans will print to stdout")
+
     # SDK ≥1.9 renamed set_global_default_tracer_provider → set_tracer_provider
     trace.set_tracer_provider(provider)
     logger.debug("OTel: TracerProvider configured → %s", _OTLP_ENDPOINT)
 
 
 def _configure_metrics() -> None:
-    """Configure MeterProvider with OTLP gRPC exporter + periodic reader."""
+    """Configure MeterProvider with OTLP gRPC exporter + periodic reader.
+
+    When OTEL_CONSOLE_EXPORT=true, also adds a reader with ConsoleMetricExporter
+    so metric snapshots print to stdout every 15 s (no collector needed).
+    """
     from opentelemetry import metrics
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
     from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 
-    exporter = OTLPMetricExporter(
-        endpoint=_OTLP_ENDPOINT,
-        insecure=True,
-    )
-    reader = PeriodicExportingMetricReader(
-        exporter,
-        export_interval_millis=15_000,   # push every 15 s
-    )
-    provider = MeterProvider(resource=_make_resource(), metric_readers=[reader])
+    exporter = OTLPMetricExporter(endpoint=_OTLP_ENDPOINT, insecure=True)
+    readers = [PeriodicExportingMetricReader(exporter, export_interval_millis=15_000)]
+
+    if _CONSOLE_EXPORT:
+        from opentelemetry.sdk.metrics.export import ConsoleMetricExporter
+        readers.append(
+            PeriodicExportingMetricReader(ConsoleMetricExporter(), export_interval_millis=15_000)
+        )
+        logger.info("OTel: ConsoleMetricExporter active — metrics will print to stdout every 15s")
+
+    provider = MeterProvider(resource=_make_resource(), metric_readers=readers)
     metrics.set_meter_provider(provider)
-    logger.debug("OTel: MeterProvider configured → %s", _OTLP_ENDPOINT)
+    logger.debug("OTel: MeterProvider configured \u2192 %s", _OTLP_ENDPOINT)
 
 
 def _configure_logs() -> None:
