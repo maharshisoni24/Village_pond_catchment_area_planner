@@ -87,6 +87,7 @@ def setup_telemetry() -> None:
         _configure_traces()
         _configure_metrics()
         _configure_logs()
+        _configure_auto_instrumentors()  # system metrics + httpx
         logger.info(
             "OTel: telemetry configured — service=%s version=%s env=%s endpoint=%s",
             _SERVICE_NAME, _SERVICE_VERSION, _ENVIRONMENT, _OTLP_ENDPOINT,
@@ -261,6 +262,31 @@ def _configure_logs() -> None:
     # trace_id / span_id into every log message's format string.
     LoggingInstrumentor().instrument(set_logging_format=True)
     logger.debug("OTel: LoggerProvider configured → %s", _OTLP_ENDPOINT)
+
+
+def _configure_auto_instrumentors() -> None:
+    """Wire SystemMetricsInstrumentor (CPU/memory/GC) and HTTPXClientInstrumentor.
+
+    SystemMetrics: exports host CPU %, memory RSS, GC counts as OTel metrics.
+    HTTPXClientInstrumentor: auto-spans every outbound httpx call (OpenTopoData,
+    OSM Overpass, Open-Meteo) so external API latency appears in traces.
+    Both are best-effort — failures are logged but never crash the app.
+    """
+    # System metrics: CPU, memory, GC → feeds Grafana system panel
+    try:
+        from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
+        SystemMetricsInstrumentor().instrument()
+        logger.info("OTel: SystemMetricsInstrumentor active — CPU/memory/GC metrics enabled")
+    except Exception as exc:
+        logger.warning("OTel: SystemMetricsInstrumentor failed (%s) — skipping", exc)
+
+    # httpx auto-instrumentation: spans for every outbound HTTP call
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        HTTPXClientInstrumentor().instrument()
+        logger.info("OTel: HTTPXClientInstrumentor active — outbound httpx calls will be traced")
+    except Exception as exc:
+        logger.warning("OTel: HTTPXClientInstrumentor failed (%s) — skipping", exc)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

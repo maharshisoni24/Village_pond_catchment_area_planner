@@ -184,7 +184,7 @@ async def run_analysis(body: AnalysisRunRequest):
             )
 
             # ── Stage 4: River mask dilation ──────────────────────────────────
-            with tel.tracer.start_as_current_span("pond.river_dilation"):
+            with tel.tracer.start_as_current_span("pond.river_dilation") as dil_span:
                 if river_mask.any():
                     ksize = RIVER_EXCLUSION_BUFFER_CELLS * 2 + 1
                     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
@@ -193,6 +193,12 @@ async def run_analysis(body: AnalysisRunRequest):
                     ).astype(bool)
                 else:
                     river_mask_dilated = river_mask
+                # Record dilation metadata so this span is informative
+                dil_span.set_attributes({
+                    "dilation.kernel_size": RIVER_EXCLUSION_BUFFER_CELLS * 2 + 1,
+                    "dilation.river_pixels_before": int(river_mask.sum()),
+                    "dilation.river_pixels_after": int(river_mask_dilated.sum()),
+                })
 
             # ── Stage 5: Built-up area detection (OSM) ────────────────────────
             with tel.tracer.start_as_current_span("pond.built_up_detection") as b_span:
