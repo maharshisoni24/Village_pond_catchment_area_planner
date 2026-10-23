@@ -33,7 +33,6 @@ cd "$REPO_ROOT/backend"
 exec env \
     OTEL_ENABLED=true \
     OTEL_CONSOLE_EXPORT=true \
-    OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
     OTEL_SERVICE_VERSION=0.2.0 \
     OTEL_DEPLOYMENT_ENVIRONMENT=development \
     python3 -m uvicorn app.main:app --host 0.0.0.0 --port 7000
