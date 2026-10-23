@@ -32,6 +32,10 @@ from typing import Optional
 _OTEL_ENABLED      = os.environ.get("OTEL_ENABLED", "true").lower() not in ("false", "0", "no")
 # When true, spans and metrics also print to stdout (no collector needed)
 _CONSOLE_EXPORT    = os.environ.get("OTEL_CONSOLE_EXPORT", "false").lower() in ("true", "1", "yes")
+# When OTEL_CONSOLE_EXPORT=true and no collector endpoint explicitly set,
+# skip OTLP exporters entirely to avoid noisy "Connection refused" retries.
+_OTLP_ENABLED      = not (_CONSOLE_EXPORT and
+                           os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") is None)
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +91,6 @@ def setup_telemetry() -> None:
         _configure_traces()
         _configure_metrics()
         _configure_logs()
-        _configure_auto_instrumentors()  # system metrics + httpx
         logger.info(
             "OTel: telemetry configured — service=%s version=%s env=%s endpoint=%s",
             _SERVICE_NAME, _SERVICE_VERSION, _ENVIRONMENT, _OTLP_ENDPOINT,
@@ -193,12 +196,13 @@ def _configure_traces() -> None:
 
     provider = TracerProvider(resource=_make_resource())
 
-    # Always wire up OTLP (batch) — errors are logged, never fatal
-    otlp_exporter = OTLPSpanExporter(
-        endpoint=_OTLP_ENDPOINT,
-        insecure=True,   # no TLS for local/lab deployment
-    )
-    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+    # OTLP exporter — skip when console-only mode to avoid Connection refused noise
+    if _OTLP_ENABLED:
+        otlp_exporter = OTLPSpanExporter(
+            endpoint=_OTLP_ENDPOINT,
+            insecure=True,
+        )
+        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 
     # Console exporter: print spans to stdout (no collector needed)
     if _CONSOLE_EXPORT:
@@ -222,8 +226,10 @@ def _configure_metrics() -> None:
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
     from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 
-    exporter = OTLPMetricExporter(endpoint=_OTLP_ENDPOINT, insecure=True)
-    readers = [PeriodicExportingMetricReader(exporter, export_interval_millis=15_000)]
+    readers = []
+    if _OTLP_ENABLED:
+        exporter = OTLPMetricExporter(endpoint=_OTLP_ENDPOINT, insecure=True)
+        readers.append(PeriodicExportingMetricReader(exporter, export_interval_millis=15_000))
 
     if _CONSOLE_EXPORT:
         from opentelemetry.sdk.metrics.export import ConsoleMetricExporter
@@ -250,43 +256,16 @@ def _configure_logs() -> None:
     from opentelemetry._logs import set_logger_provider
     from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
-    exporter = OTLPLogExporter(
-        endpoint=_OTLP_ENDPOINT,
-        insecure=True,
-    )
     log_provider = LoggerProvider(resource=_make_resource())
-    log_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+    if _OTLP_ENABLED:
+        exporter = OTLPLogExporter(endpoint=_OTLP_ENDPOINT, insecure=True)
+        log_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
     set_logger_provider(log_provider)
 
     # Bridge: makes Python logging emit OTel log records AND injects
     # trace_id / span_id into every log message's format string.
     LoggingInstrumentor().instrument(set_logging_format=True)
     logger.debug("OTel: LoggerProvider configured → %s", _OTLP_ENDPOINT)
-
-
-def _configure_auto_instrumentors() -> None:
-    """Wire SystemMetricsInstrumentor (CPU/memory/GC) and HTTPXClientInstrumentor.
-
-    SystemMetrics: exports host CPU %, memory RSS, GC counts as OTel metrics.
-    HTTPXClientInstrumentor: auto-spans every outbound httpx call (OpenTopoData,
-    OSM Overpass, Open-Meteo) so external API latency appears in traces.
-    Both are best-effort — failures are logged but never crash the app.
-    """
-    # System metrics: CPU, memory, GC → feeds Grafana system panel
-    try:
-        from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
-        SystemMetricsInstrumentor().instrument()
-        logger.info("OTel: SystemMetricsInstrumentor active — CPU/memory/GC metrics enabled")
-    except Exception as exc:
-        logger.warning("OTel: SystemMetricsInstrumentor failed (%s) — skipping", exc)
-
-    # httpx auto-instrumentation: spans for every outbound HTTP call
-    try:
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-        HTTPXClientInstrumentor().instrument()
-        logger.info("OTel: HTTPXClientInstrumentor active — outbound httpx calls will be traced")
-    except Exception as exc:
-        logger.warning("OTel: HTTPXClientInstrumentor failed (%s) — skipping", exc)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
