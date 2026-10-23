@@ -64,3 +64,5 @@ result.geojson
 
 # Jupyter / notebook checkpoints
 .ipynb_checkpoints/
+# Report docs (local only — LaTeX, PDF, screenshots)
+docs/
